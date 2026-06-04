@@ -1,40 +1,198 @@
-<h1>DLL-Hijacking</h1>
+<h1>Code Breakdown</h1>
 
-"DLL" stands for **Dynamic-Linked-Libraries** which are shared libraries / modules containing code and data that can be used by multiple programs simultaneously. in other words, they're collections of functions, variables, and other resources that applications can load and use during runtime. This is better than having them statically linked into each program's executable file at compile time
+<h2>Overview</h2>
 
-**DLL Hijacking** is when malicous code is injected into these DLLs, making it so by replacing a DLL file with an infected version and placing it within the search parameters of an application, the infected file will be called when the application loads
+This Proof-of-Concept (PoC) DLL demonstrates the execution phase of a DLL Search Order Hijacking attack. Instead of performing any malicious actions, the DLL creates a timestamped marker file and displays a message box when loaded. This cleanly demonstrates that the DLL was successfully loaded and executed by the target application.
 
-<h2>Detection</h2>
+<h2>Required Header Files</h2>
 
-A relevant Sysmon Event ID for detecting DLL-Hijacking would be ```Event Type 7``` which represents “Module/Image Loaded” events. Why? Because DLLs are loaded into the process's memory, which means that any instances of DLLs being loaded into program memory are shown in these events
-- <img width="875" height="202" alt="image" src="https://github.com/user-attachments/assets/ab2c7d31-5ea1-4f1f-8c34-561570a6e31d" />
+```
+#include <windows.h>
+#include <stdio.h>
+#include <time.h>
+```
+The code begins by importing three header files. The **windows.h** header provides access to the Windows API, which is used for functions such as `MessageBoxA()` and the DLL entry point definition `DllMain()` (this function is being called to handle initialization / when the process loads the DLL). 
 
-I edited my vms symon config file ```sysmonconfig-export.xml``` so I'm able to see these events in **EventViewer** after editing the Event ID 7 entry like so: 
-- <img width="1346" height="152" alt="image" src="https://github.com/user-attachments/assets/335a237f-e307-4eb7-a0ac-408876460431" />
+The **stdio.h** header supplies standard file input/output operations, which will be used to create and write to the marker file. 
 
+Finally, **time.h** provides date/time functions used to generate timestamps that are written to the log file each time the DLL executes.
 
-I went to EventViewer : ```Applications and Services Logs → Microsoft → Windows → Sysmon```
+<h2>DLL Entry-Point</h2>
 
-TIP → to find DLL files without knowing how it was performed prior, looking for UNSIGNED dll files will uncover the dll responsible 
+```
+BOOL APIENTRY DllMain(
+  HMODULE hModule,
+  DWORD ul_reason_for_call,
+  LPVOID lpReserved )
+```
+Every Windows DLL contains an entry point known as `DllMain()`. This function serves a similar purpose to the `main()` function in a traditional executable. Whenever Windows loads or unloads a DLL, it automatically invokes this function.
 
-These logs contain DLL signing status, process or image responsible for loading the DLL, and the specific DLL that was loaded 
+The **hModule** parameter contains a handle to the DLL itself. A "handle" is basically a way that windows gives you a reference to an object, which in this case would be the DLL. Using this also allows you to see where the DLL is loaded (memory address), what it's filename is and what resources are embedded in it. However, for this demo that info is ignored. **lpReserved** is a windows-managed pointer that gives extra context regarding how the DLL is being loaded or unloaded.
 
-Here is a log I looked at:
-- <img width="841" height="284" alt="image" src="https://github.com/user-attachments/assets/08277ff7-4759-4491-af75-b442cea1df3a" />
+**ul_reason_for_call** indicates why the function was called. This parameter specifies why Windows invoked `DllMain()`, such as when a process loads the DLL, unloads the DLL, creates a thread, or destroys a thread. It's critical becuase it allows the DLL to determine when the target process has loaded the library and when the demonstration payload should execute
 
-[Here](https://www.wietzebeukema.nl/blog/hijacking-dlls-in-windows) is a list of DLL Hijack techniques that work on Windows 10 (version: 1909) 
+For this PoC, the most important parameter is **ul_reason_for_call**, as it tells the DLL whether it is being loaded into a process, unloaded from a process, attached to a thread, or detached from a thread.
 
-Basic rundown of the Hijack I'm investigating:
-- Renaming ```reflective_dll.x64.dll``` to ```WININET.dll```
-- Moving ```calc.exe``` from ```C:\Windows\System32``` along with ```WININET.dll``` to a writable directory (such as the **Desktop**)
-- Executing ```calc.exe```
+<h2>Determining Why the DLL Was Loaded</h2>
 
-I applied a filter for **ID 7** and looked for events containing the **calc.exe** string:
-- <img width="1246" height="586" alt="image" src="https://github.com/user-attachments/assets/a1586e20-876d-416a-8628-543fcc6b47f3" />
+```switch (ul_reason_for_call) {```
 
-With the filter I was able to find was able to look at indicators of compromise (IOCs):
-- “**calc.exe**” is supposed to be found in **system32** or sometimes **Syswow64**, which are NOT writable directories. But, I'm seeing a copy in a writable directory
-- "**WININET.dll**", originally located in **System32**, should not be loaded outside of System32 by **calc.exe**. Now that we are seeing a system32 process being loaded in a writable directory by the parent process: **calc.exe** , it’s considered in this case an IOC. HOWEVER, some instances of **WININET.dll** loading outside of system32 are due to certain applications requiring to package certain DLL versions for stability
-- The original **WININET.dll** is signed by the OS while the fake one / injected DLL isn’t signed 
+The switch statement allows the program to comapre the value of **ul_reason_for_call** against several possible values and then execte the corresponding code block. This switch statement allows the DLL to react differently depending on the reason. 
 
+```
+ul_reason_for_call
+          ↓
+       switch
+          ↓
+ ┌────────┼────────┐
+ ↓        ↓        ↓
+PROCESS  THREAD  DETACH
+ATTACH   ATTACH
+```
 
+In our situation, the code is wating for a process to be attatched before executing the payload. 
+
+When windows loads a DLL into a process for the first time, it generates a **DLL_PROCESS_ATTACH** event. In a Search Order Hijack, this is the moment when the vulnerable application loads the attacker's DLL instead of the legitimate library:
+
+```
+VictimApp.exe starts
+        ↓
+VictimApp.exe requires Example.dll
+        ↓
+Windows searches for Example.dll
+        ↓
+Attacker-controlled DLL is found
+        ↓
+Windows loads DLL
+        ↓
+DllMain()
+        ↓
+DLL_PROCESS_ATTACH
+```
+
+Once the DLL_PROCESS_ATTATCH event occurs, the payload runs. This is one of the reasons DLL hijacking can be dangerous. The vulnerable application unintentionally executes code simply by loading what it believes is a legitimate dependency.
+
+<h2>Creating the Marker File</h2>
+
+```
+FILE* pFile;
+errno_t err = fopen_s(&pFile, "hijacked_success.txt", "a");
+```
+
+**pFile** is a pointer to a file object, which will allow `fprintf()` and `fclose()` to know which file they should operate on.
+
+The first action performed by the payload is opening a file named _hijacked_success.txt_. which will be created within the applications working directory. notice the 3rd parameter is **"a"** (append) which means that multiple successful executions can be logged in the file. If the file doesn't already exist, it's automatically created. If it already exists, new entries are appended to the end of the file rather than overwriting previous data.
+
+<h2>Error Checking</h2>
+
+```
+if (err == 0 && pFile) {
+```
+
+Before writing to the file, the code verifies that the file was opened successfully.
+
+The condition checks two things:
+- `err == 0` confirms that no error occurred during file creation.
+- **pFile** confirms that the file pointer is valid and not NULL.
+
+Performing this validation helps prevent crashes or unexpected behavior if the file cannot be created. This sort of defensive programming isn't necessary but was done for the sake of developing good habits.
+
+If both conditions are true, then the DLL proceeds with logging.
+
+<h2>Generating a Timestamp</h2>
+
+```
+time_t now = time(NULL);
+```
+
+The `time()` function retrieves the current system time and stores it in the variable now.
+
+This value is represented internally as the number of seconds that have elapsed since January 1, 1970 (Unix Epoch Time).
+- Example) `January 1, 1970 00:00:00 UTC = 1749051042`
+
+To make the timestamp readable, the code later converts it into a formatted string.
+
+<h2>Writing Evidence of Execution</h2>
+
+```
+fprintf(
+  pFile,
+  "[%s] DLL hijacking successful - malicious DLL executed via DllMain\n",
+  ctime(&now)
+);
+```
+
+The `fprintf()` function writes a log entry to the marker file (**pFile**). 
+
+The timestamp generated by `time()` is converted into a readable string using `ctime()`. The resulting output resembles:
+```
+**[Thu Jun 4 15:30:42 2026]
+DLL hijacking successful - malicious DLL executed via DllMain**
+```
+
+This entry serves as persistent proof that the DLL was loaded and executed by the target process.
+
+<h2>Closing the File</h2>
+
+```
+fclose(pFile);
+```
+
+After writing the log entry, the file is closed. Closing the file ensures that all buffered data is written to disk and releases the associated system resources. This is a standard best practice whenever file operations are performed.
+
+<h2>Confirmation Message</h2>
+
+```
+MessageBoxA(
+  NULL,
+  "DLL Hijacking PoC: Malicious DLL executed!\n\nCheck hijacked_success.txt for proof.",
+  "DLL Search-Order Hijacking Demonstration",
+  MB_OK | MB_ICONINFORMATION
+);
+```
+
+After writing the marker file, the DLL displays a Windows message box. This popup is meant to give immediate visual confirmation that the DLL was successfully loaded and executed. The message also tells the user to check the generated text file for additional proof of execution.
+
+The flags used within the function specify how the dialog should appear:
+
+- **MB_OK** creates a standard OK button.
+- **MB_ICONINFORMATION** displays the informational icon.
+
+<h2>Ignored DLL Events</h2>
+
+```
+case DLL_PROCESS_DETACH:
+case DLL_THREAD_ATTACH:
+case DLL_THREAD_DETACH:
+break;
+```
+
+Windows may call `DllMain()` for several additional events like thread creation/termination or process shutdown.
+
+These events are intentionally ignored because they aren't relevant to demonstrating DLL Search Order Hijacking. The PoC only needs to execute when the DLL is initially loaded into memory.
+
+<h2>Execution Flow</h2>
+
+The complete execution sequence is as follows:
+
+```
+Application Starts
+        ↓
+Windows Searches for Required DLL
+        ↓
+Attacker-Controlled DLL Found First
+        ↓
+Windows Loads DLL
+        ↓
+DllMain() Executes
+        ↓
+Marker File Created
+        ↓
+Message Box Displayed
+```
+
+This flow demonstrates the core principle behind DLL Search Order Hijacking: if an attacker-controlled DLL is loaded before the legitimate DLL, arbitrary code within the malicious DLL will execute in the context of the target process.
+
+<h1>Conclusion</h1>
+
+This POC intentionally performs only benign actions to demonstrate successful code execution. By creating a timestamped marker file and displaying a confirmation dialog, the project provides both forensic and visual evidence that the DLL was loaded by the target application. While real-world DLL hijacking attacks may use the same execution path to perform more complex actions, this PoC focuses solely on illustrating the mechanics of the technique in a safe and controlled manner.
