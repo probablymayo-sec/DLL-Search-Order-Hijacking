@@ -192,7 +192,3 @@ Message Box Displayed
 ```
 
 This flow demonstrates the core principle behind DLL Search Order Hijacking: if an attacker-controlled DLL is loaded before the legitimate DLL, arbitrary code within the malicious DLL will execute in the context of the target process.
-
-<h1>Conclusion</h1>
-
-This POC intentionally performs only benign actions to demonstrate successful code execution. By creating a timestamped marker file and displaying a confirmation dialog, the project provides both forensic and visual evidence that the DLL was loaded by the target application. While real-world DLL hijacking attacks may use the same execution path to perform more complex actions, this PoC focuses solely on illustrating the mechanics of the technique in a safe and controlled manner.
