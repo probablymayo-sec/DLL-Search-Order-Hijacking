@@ -1,194 +1,118 @@
-<h1>Code Breakdown</h1>
+# DLL-Hijacking — Search Order Hijacking PoC
 
-<h2>Overview</h2>
+A Proof-of-Concept (PoC) demonstrating DLL Search Order Hijacking (MITRE ATT&CK [T1574.001](https://attack.mitre.org/techniques/T1574/001/)). This repository contains a deliberately vulnerable host application and a benign malicious DLL that illustrate how Windows resolves unqualified DLL names and how that behavior can be abused.
 
-This Proof-of-Concept (PoC) DLL demonstrates the execution phase of a DLL Search Order Hijacking attack. Instead of performing any malicious actions, the DLL creates a timestamped marker file and displays a message box when loaded. This cleanly demonstrates that the DLL was successfully loaded and executed by the target application.
+**Full walkthrough, mechanism breakdown, and detection guide:** [anthonydimayo.com/writing/dll-search-order-hijacking](https://anthonydimayo.com/writing/dll-search-order-hijacking)
 
-<h2>Required Header Files</h2>
+---
 
-```
-#include <windows.h>
-#include <stdio.h>
-#include <time.h>
-```
-The code begins by importing three header files. The **windows.h** header provides access to the Windows API, which is used for functions such as `MessageBoxA()` and the DLL entry point definition `DllMain()` (this function is being called to handle initialization / when the process loads the DLL). 
+## Repository Contents
 
-The **stdio.h** header supplies standard file input/output operations, which will be used to create and write to the marker file. 
+| File | Description |
+|------|-------------|
+| `vulnerable_app.cpp` | Deliberately vulnerable host application |
+| `hijackable.cpp` | Benign malicious DLL --> executes payload via `DllMain` on load |
 
-Finally, **time.h** provides date/time functions used to generate timestamps that are written to the log file each time the DLL executes.
+---
 
-<h2>DLL Entry-Point</h2>
+## Code Breakdown
 
-```
-BOOL APIENTRY DllMain(
-  HMODULE hModule,
-  DWORD ul_reason_for_call,
-  LPVOID lpReserved )
-```
-Every Windows DLL contains an entry point known as `DllMain()`. This function serves a similar purpose to the `main()` function in a traditional executable. Whenever Windows loads or unloads a DLL, it automatically invokes this function.
+### _vulnerable_app.cpp_
 
-The **hModule** parameter contains a handle to the DLL itself. A "handle" is basically a way that windows gives you a reference to an object, which in this case would be the DLL. Using this also allows you to see where the DLL is loaded (memory address), what it's filename is and what resources are embedded in it. However, for this demo that info is ignored. **lpReserved** is a windows-managed pointer that gives extra context regarding how the DLL is being loaded or unloaded.
+The host application simulates a vulnerable program by calling `LoadLibrary()` with an **unqualified DLL name** — the root cause of this entire attack class.
 
-**ul_reason_for_call** indicates why the function was called. This parameter specifies why Windows invoked `DllMain()`, such as when a process loads the DLL, unloads the DLL, creates a thread, or destroys a thread. It's critical becuase it allows the DLL to determine when the target process has loaded the library and when the demonstration payload should execute
-
-For this PoC, the most important parameter is **ul_reason_for_call**, as it tells the DLL whether it is being loaded into a process, unloaded from a process, attached to a thread, or detached from a thread.
-
-<h2>Determining Why the DLL Was Loaded</h2>
-
-```switch (ul_reason_for_call) {```
-
-The switch statement allows the program to comapre the value of **ul_reason_for_call** against several possible values and then execte the corresponding code block. This switch statement allows the DLL to react differently depending on the reason. 
-
-```
-ul_reason_for_call
-          ↓
-       switch
-          ↓
- ┌────────┼────────┐
- ↓        ↓        ↓
-PROCESS  THREAD  DETACH
-ATTACH   ATTACH
+```cpp
+HMODULE hModule = LoadLibrary(L"hijackable.dll");
 ```
 
-In our situation, the code is wating for a process to be attatched before executing the payload. 
-
-When windows loads a DLL into a process for the first time, it generates a **DLL_PROCESS_ATTACH** event. In a Search Order Hijack, this is the moment when the vulnerable application loads the attacker's DLL instead of the legitimate library:
+When `LoadLibrary()` receives a bare filename with no full path, Windows searches for the DLL through a predefined sequence of directories called the **DLL search order**:
 
 ```
-VictimApp.exe starts
-        ↓
-VictimApp.exe requires Example.dll
-        ↓
-Windows searches for Example.dll
-        ↓
-Attacker-controlled DLL is found
-        ↓
-Windows loads DLL
-        ↓
-DllMain()
-        ↓
-DLL_PROCESS_ATTACH
+1. Directory the application loaded from
+2. System32
+3. 16-bit System directory
+4. Windows directory
+5. Current working directory
+6. Directories in PATH
 ```
 
-Once the DLL_PROCESS_ATTATCH event occurs, the payload runs. This is one of the reasons DLL hijacking can be dangerous. The vulnerable application unintentionally executes code simply by loading what it believes is a legitimate dependency.
+Since `hijackable.dll` doesn't exist in System32 or any other trusted location, the search proceeds into writable directories where an attacker can plant a malicious copy. The application loads whatever it finds first, with no way to distinguish the legitimate DLL from the attacker's version.
 
-<h2>Creating the Marker File</h2>
+---
 
-```
-FILE* pFile;
-errno_t err = fopen_s(&pFile, "hijacked_success.txt", "a");
-```
+### _hijackable.cpp_
 
-**pFile** is a pointer to a file object, which will allow `fprintf()` and `fclose()` to know which file they should operate on.
+The malicious DLL uses `DllMain()` — the standard Windows DLL entry point — to execute its payload automatically when loaded by the host process. No explicit call is needed; Windows invokes `DllMain()` as part of the loading sequence.
 
-The first action performed by the payload is opening a file named _hijacked_success.txt_. which will be created within the applications working directory. notice the 3rd parameter is **"a"** (append) which means that multiple successful executions can be logged in the file. If the file doesn't already exist, it's automatically created. If it already exists, new entries are appended to the end of the file rather than overwriting previous data.
-
-<h2>Error Checking</h2>
+The `ul_reason_for_call` parameter controls when the payload fires. It only executes on `DLL_PROCESS_ATTACH` — the moment the host application first loads the DLL into memory:
 
 ```
-if (err == 0 && pFile) {
+vulnerable_app.exe starts
+         ↓
+Windows searches DLL search order
+         ↓
+hijackable.dll found in writable directory
+         ↓
+Windows loads DLL → DllMain() called
+         ↓
+DLL_PROCESS_ATTACH → payload executes
 ```
 
-Before writing to the file, the code verifies that the file was opened successfully.
+**Payload (both actions are benign):**
+- Writes a timestamped entry to `hijacked_success.txt` in the working directory — persistent forensic proof of execution
+- Displays a MessageBox for immediate visual confirmation
 
-The condition checks two things:
-- `err == 0` confirms that no error occurred during file creation.
-- **pFile** confirms that the file pointer is valid and not NULL.
+---
 
-Performing this validation helps prevent crashes or unexpected behavior if the file cannot be created. This sort of defensive programming isn't necessary but was done for the sake of developing good habits.
+## Building
 
-If both conditions are true, then the DLL proceeds with logging.
+Requires MSVC (Visual Studio C++ build tools).
 
-<h2>Generating a Timestamp</h2>
+```bat
+:: Compile the malicious DLL
+cl /LD hijackable.cpp /Fe:hijackable.dll
 
-```
-time_t now = time(NULL);
-```
-
-The `time()` function retrieves the current system time and stores it in the variable now.
-
-This value is represented internally as the number of seconds that have elapsed since January 1, 1970 (Unix Epoch Time).
-- Example) `January 1, 1970 00:00:00 UTC = 1749051042`
-
-To make the timestamp readable, the code later converts it into a formatted string.
-
-<h2>Writing Evidence of Execution</h2>
-
-```
-fprintf(
-  pFile,
-  "[%s] DLL hijacking successful - malicious DLL executed via DllMain\n",
-  ctime(&now)
-);
+:: Compile the vulnerable host application
+cl vulnerable_app.cpp /Fe:vulnerable_app.exe
 ```
 
-The `fprintf()` function writes a log entry to the marker file (**pFile**). 
+---
 
-The timestamp generated by `time()` is converted into a readable string using `ctime()`. The resulting output resembles:
-```
-**[Thu Jun 4 15:30:42 2026]
-DLL hijacking successful - malicious DLL executed via DllMain**
-```
+## Running the PoC
 
-This entry serves as persistent proof that the DLL was loaded and executed by the target process.
+1. Place `vulnerable_app.exe` and `hijackable.dll` in the same directory
+2. Open a terminal in that directory
+3. Run `.\vulnerable_app.exe`
+4. Confirm execution:
+   - A MessageBox appears
+   - `hijacked_success.txt` is created in the working directory with a timestamp
 
-<h2>Closing the File</h2>
+**Optional — observe the search order live:** Open Process Monitor (Sysinternals) before running the app. Filter for `Process Name is vulnerable_app.exe` and `Path contains hijackable`. You will see a sequence of `NAME NOT FOUND` results as Windows walks each directory in the search order, followed by `SUCCESS` when it finds your DLL.
 
-```
-fclose(pFile);
-```
+---
 
-After writing the log entry, the file is closed. Closing the file ensures that all buffered data is written to disk and releases the associated system resources. This is a standard best practice whenever file operations are performed.
+## Detection
 
-<h2>Confirmation Message</h2>
+Sysmon **Event ID 7 (Image Loaded)** captures DLL load events. When this PoC executes, watch for:
 
-```
-MessageBoxA(
-  NULL,
-  "DLL Hijacking PoC: Malicious DLL executed!\n\nCheck hijacked_success.txt for proof.",
-  "DLL Search-Order Hijacking Demonstration",
-  MB_OK | MB_ICONINFORMATION
-);
-```
+- `vulnerable_app.exe` loading `hijackable.dll` from a **writable directory** outside System32
+- `hijackable.dll` is **unsigned** — legitimate system DLLs carry a Microsoft signature
+- The load path is unexpected for any known legitimate application
 
-After writing the marker file, the DLL displays a Windows message box. This popup is meant to give immediate visual confirmation that the DLL was successfully loaded and executed. The message also tells the user to check the generated text file for additional proof of execution.
+For the full detection walkthrough — Sysmon configuration, Wazuh ingestion, and a Sigma rule — see the [blog post](https://anthonydimayo.com/writing/dll-search-order-hijacking).
 
-The flags used within the function specify how the dialog should appear:
+---
 
-- **MB_OK** creates a standard OK button.
-- **MB_ICONINFORMATION** displays the informational icon.
+## Disclaimer
 
-<h2>Ignored DLL Events</h2>
+This repository is for **educational purposes only**. Deploy and execute only in lab environments you own or have explicit written permission to test. The author is not responsible for any misuse.
 
-```
-case DLL_PROCESS_DETACH:
-case DLL_THREAD_ATTACH:
-case DLL_THREAD_DETACH:
-break;
-```
+---
 
-Windows may call `DllMain()` for several additional events like thread creation/termination or process shutdown.
+## References
 
-These events are intentionally ignored because they aren't relevant to demonstrating DLL Search Order Hijacking. The PoC only needs to execute when the DLL is initially loaded into memory.
-
-<h2>Execution Flow</h2>
-
-The complete execution sequence is as follows:
-
-```
-Application Starts
-        ↓
-Windows Searches for Required DLL
-        ↓
-Attacker-Controlled DLL Found First
-        ↓
-Windows Loads DLL
-        ↓
-DllMain() Executes
-        ↓
-Marker File Created
-        ↓
-Message Box Displayed
-```
-
-This flow demonstrates the core principle behind DLL Search Order Hijacking: if an attacker-controlled DLL is loaded before the legitimate DLL, arbitrary code within the malicious DLL will execute in the context of the target process.
+- MITRE ATT&CK — [T1574.001: DLL Search Order Hijacking](https://attack.mitre.org/techniques/T1574/001/)
+- Microsoft Learn — [Dynamic-link library search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)
+- Microsoft Learn — [Dynamic-Link Library Security](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-security)
+- Wietze Beukema — [Hijacking DLLs in Windows](https://www.wietzebeukema.nl/blog/hijacking-dlls-in-windows)
+- [hijacklibs.net](https://hijacklibs.net) — Curated database of real-world DLL hijack opportunities
