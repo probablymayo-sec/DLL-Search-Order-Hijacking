@@ -6,7 +6,7 @@ int main() {
     printf("[*] This DLL doesn't exist in System32 or other trusted locations.\n");
     printf("[*] Windows will search the search order and may load an attacker's version.\n\n");
     
-    HMODULE hModule = LoadLibrary(L"hijackable.dll");
+    HMODULE hModule = LoadLibrary("hijackable.dll");
     
     if (hModule != NULL) {
         printf("[+] Successfully loaded hijackable.dll\n");
