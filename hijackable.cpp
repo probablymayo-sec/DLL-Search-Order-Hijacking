@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <time.h>
+#pragma comment(lib, "user32.lib")
 
 BOOL APIENTRY DllMain(
     HMODULE hModule,
