@@ -66,7 +66,7 @@ DLL_PROCESS_ATTACH → payload executes
 
 ## Building
 
-Requires MSVC (Visual Studio C++ build tools).
+Using VSCode (You will need Visual Studio C++ build tools).
 
 ```bat
 :: Compile the malicious DLL
@@ -103,16 +103,15 @@ For the full detection walkthrough — Sysmon configuration, Wazuh ingestion, an
 
 ---
 
-## Disclaimer
-
-This repository is for **educational purposes only**. Deploy and execute only in lab environments you own or have explicit written permission to test. The author is not responsible for any misuse.
-
----
-
 ## References
 
-- MITRE ATT&CK — [T1574.001: DLL Search Order Hijacking](https://attack.mitre.org/techniques/T1574/001/)
-- Microsoft Learn — [Dynamic-link library search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)
-- Microsoft Learn — [Dynamic-Link Library Security](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-security)
+- MITRE ATT&CK — [T1574.001: DLL Search Order Hijacking](https://attack.mitre.org/techniques/T1574/001/) 
+- Microsoft Learn — [DLL Search Order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)
+- https://www.upguard.com/blog/dll-hijacking 
+- Microsoft Learn — [DLL Security](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-security)
 - Wietze Beukema — [Hijacking DLLs in Windows](https://www.wietzebeukema.nl/blog/hijacking-dlls-in-windows)
 - [hijacklibs.net](https://hijacklibs.net) — Curated database of real-world DLL hijack opportunities
+- Red Team Notes — [DLL Search Order Hijacking](https://dmcxblue.gitbook.io/red-team-notes/persistence/dll-search-order-hijacking) 
+- Microsoft Learn — [Dynamic Linked Libraries](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-libraries) 
+- Palo Alto — https://unit42.paloaltonetworks.com/dll-hijacking-techniques/ 
+- https://hijacklibs.net/ 
