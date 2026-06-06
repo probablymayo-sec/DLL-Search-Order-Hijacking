@@ -96,10 +96,10 @@ cl vulnerable_app.cpp /Fe:vulnerable_app.exe
 Sysmon **Event ID 7 (Image Loaded)** captures DLL load events. When this PoC executes, watch for:
 
 - `vulnerable_app.exe` loading `hijackable.dll` from a **writable directory** outside System32
-- `hijackable.dll` is **unsigned** — legitimate system DLLs carry a Microsoft signature
+- `hijackable.dll` is **unsigned**: legitimate system DLLs carry a Microsoft signature
 - The load path is unexpected for any known legitimate application
 
-For the full detection walkthrough — Sysmon configuration, Wazuh ingestion, and a Sigma rule — see the [blog post](https://anthonydimayo.com/writing/dll-search-order-hijacking).
+For the full detection walkthrough with Sysmon configuration, Wazuh ingestion, and a Sigma rule --> see the [blog post](https://anthonydimayo.com/writing/dll-search-order-hijacking).
 
 ---
 
