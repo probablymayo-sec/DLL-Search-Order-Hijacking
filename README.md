@@ -2,7 +2,7 @@
 
 A Proof-of-Concept (PoC) demonstrating DLL Search Order Hijacking (MITRE ATT&CK [T1574.001](https://attack.mitre.org/techniques/T1574/001/)). This repository contains a deliberately vulnerable host application and a benign malicious DLL that illustrate how Windows resolves unqualified DLL names and how that behavior can be abused.
 
-**Full walkthrough, mechanism breakdown, and detection guide:** [anthonydimayo.com/writing/dll-search-order-hijacking](https://anthonydimayo.com/writing/dll-search-order-hijacking)
+**Full walkthrough:** [anthonydimayo.com/writing/dll-search-order-hijacking](https://anthonydimayo.com/writing/dll-search-order-hijacking)
 
 ---
 
